@@ -1,0 +1,447 @@
+---
+title: "Homework 4"
+author: "Cameron Wheatley, Joseph Monahan, Saager buch"
+date: "4/16/2023"
+output: html_document
+---
+
+##Question 1:
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, comment = NA, warnings = NA)
+library(tidyverse)
+library(rsample)
+library(modelr)
+library(mosaic)
+library(caret)
+library(scales)
+library(knitr)
+library(corrplot)
+library(ggpubr)
+library(arules)
+library(arulesViz)
+options(scipen = 999)
+```
+
+
+```{r, include = FALSE, warning = FALSE, message = FALSE}
+wine <- read.csv('https://raw.githubusercontent.com/jgscott/ECO395M/master/data/wine.csv')
+
+wine_qualtiycolor <- wine %>%
+  select(-c(quality, color))
+wine_qualtiycolor <- scale(wine_qualtiycolor, center=TRUE, scale=TRUE)
+pcamodel <- prcomp(wine_qualtiycolor, rank = 5)  
+round(pcamodel$rotation, 2)
+loadings <- pcamodel$rotation
+scores <- pcamodel$x
+scores <- data.frame(scores)
+pca_plot <- ggplot(scores, aes(x = PC1, y = PC2, color = wine$color)) +
+  geom_point() +
+  labs(x = "Component 1", y = "Component 2", color = "Color") +
+  scale_color_manual(labels = c("Red", "White"), values = c("red", "beige")) +
+  ggtitle("PCA Model") +
+  theme(panel.border = element_rect(color = "blue", fill = NA, size = 2),
+        plot.title = element_text(hjust = 0.5),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "blue"))
+clusta <- kmeans(wine_qualtiycolor, 2, nstart=25)
+kmeans_plot_color1 <- ggplot(wine, aes(total.sulfur.dioxide, citric.acid, color = factor(clusta$cluster))) + 
+  geom_point(alpha=0.5) +
+    labs(x ="Total Sulfur Dioxide", y ="Citric Acid", color = "Color") +
+  scale_color_manual(labels = c("Red", "White"), values = c("red", "beige")) +
+  ggtitle("Kmeans") +
+  theme(panel.border = element_rect(color = "blue", fill = NA, size = 2),
+        plot.title = element_text(hjust = 0.5),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "blue"))
+kmeans_plot_color2 <- ggplot(wine, aes(density, residual.sugar, color = factor(clusta$cluster))) + 
+  geom_point(alpha=0.5) +
+    labs(x ="Density", y ="Residual Sugar", color = "Wine Color") +
+  scale_color_manual(labels = c("Red", "White"), values = c("red", "beige")) +
+  ggtitle("Kmeans") +
+  theme(panel.border = element_rect(color = "blue", fill = NA, size = 2),
+        plot.title = element_text(hjust = 0.5),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "blue"))
+pca_plot_quality <- ggplot(scores, aes(x = PC1, y = PC2, color = wine$quality)) +
+  geom_point() +
+  labs(x = "Component 1", y = "Component 2", color = "Quality") +
+  ggtitle("PCA Model") +
+  theme(panel.border = element_rect(color = "blue", fill = NA, size = 2),
+        plot.title = element_text(hjust = 0.5),
+        legend.background = element_blank(),
+        legend.box.background = element_rect(color = "blue"))
+
+```
+
+
+```{r, include = TRUE, warning = FALSE, message = FALSE}
+pca_plot
+
+kmeans_plot_color1
+
+kmeans_plot_color2
+
+pca_plot_quality
+
+```
+Overall, we see that the PCA model does a better job of distinguishing between the red and white wines in comparison to the kmeans clustering algorithm. The reasoning behind PCA outperforming the Kmeans clustering is because it compresses the features whereas kmeans clustering compresses the data points themselves. In the application of this case, it works better because we are focussing on the differences between the features.
+
+We then used the PCA method to analyze if it could distinguish between different quality wines. Given the graph above, we deduce that the PCA method is not very accurate at distinguishing the different quality wines.
+
+##Question 2:
+
+
+
+```{r package_calls, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(lattice)
+library(grid)
+library(gridExtra)
+library(mosaic)
+library(quantmod)
+library(foreach)
+set.seed(1)
+```
+
+# The goal
+
+"NutrientH20" (pseudonym) wants to understand its social-media audience a little bit better, so that it could hone its messaging a little more sharply.
+
+# Assumptions
+
+For the sake of this analysis (based on the pseudonym) we will **consider NutrientH20 as a nutrient water brand which is entering the market of flavoured electrolytes**.
+
+# Approach
+
+1. Identify scope+context of problem (goal+assumptions)
+2. Data normalization
+4. Testing
+    a. KNN Clustering
+    b. PCA
+    c. Cluster Identification
+5. Recommendation
+
+# Data pre-processing
+
+The dataset includes 36 tweet categories for 7882 users and each cell represents how many times each user has posted a tweet that can be tagged to that category. The categories include...
+
+```{r,include= FALSE, echo=FALSE}
+df  <- read.csv('https://raw.githubusercontent.com/jgscott/ECO395M/master/data/social_marketing.csv', row.names=1)
+head(df)
+nrow(df)
+ncol(df)
+```
+
+```{r, echo=FALSE}
+kable(sort(colnames(df)))
+```
+
+## Data normalization
+
+The solution here is that the columns have similar items with values for frequency of occurrence, thus, I calculate the term frequencies as % of tweets tagged to a category per user. This normalizes for the difference in number of tweets per user.
+
+```{r tf, include=FALSE}
+df_freq = df/rowSums(df)
+head(df_freq,5)
+```
+
+```{r, echo=FALSE}
+hist(rowSums(df), main="Histogram - number of tweets by user", xlab = "Number of tweets")
+```
+
+## Outlier removal
+
+Looking at the 4 unwanted categoies - **chatter**, **uncategorized**, **adult** and **spam** and see the percentage of data filtered when we set a range of cutoffs on the term frequency of that particular category for every user.
+
+1) Chatter
+
+```{r chatter_out, include=FALSE, echo=FALSE}
+chatter_outlier = c()
+for(i in seq(0.15,0.4,0.05)){
+    chatter_outlier = rbind(chatter_outlier,nrow(df_freq%>%filter(chatter>i))*100/nrow(df_freq))
+    }
+df_chatter_outlier = data.frame(cbind(seq(15,40,5),chatter_outlier))
+colnames(df_chatter_outlier) <- c("TF_Chatter", "% Data")
+kable(df_chatter_outlier)
+```
+
+
+2) Adult
+
+```{r adult_out, include=FALSE, echo=FALSE}
+adult_outlier = c()
+for(i in seq(0.1,0.5,0.05)){
+    adult_outlier = rbind(adult_outlier,nrow(df_freq%>%filter(adult>i))*100/nrow(df_freq))
+    }
+df_adult_outlier = data.frame(cbind(seq(10,50,5),adult_outlier))
+colnames(df_adult_outlier)  <- c("TF_Adult", "% Data")
+kable(df_adult_outlier)
+```
+
+
+3) Spam
+
+```{r spam_out, include=FALSE, echo=FALSE}
+spam_outlier = c()
+for(i in seq(0.01,0.15,0.05)){
+    spam_outlier = rbind(spam_outlier,nrow(df_freq%>%filter(spam>i))*100/nrow(df_freq))
+    }
+df_spam_outlier = data.frame(cbind(seq(1,15,5),spam_outlier))
+colnames(df_spam_outlier)  <- c("TF_Spam", "% Data")
+kable(df_spam_outlier)
+```
+
+
+4) No Category
+
+```{r uncta_out, include=FALSE, echo=FALSE}
+uncategorized_outlier = c()
+for(i in seq(0.1,0.4,0.03)){
+    uncategorized_outlier = rbind(uncategorized_outlier,nrow(df_freq%>%filter(uncategorized>i))*100/nrow(df_freq))
+    }
+df_uncategorized_outlier = data.frame(cbind(seq(10,40,3),uncategorized_outlier))
+colnames(df_uncategorized_outlier)  <- c("TF_Uncat", "% Data")
+kable(df_uncategorized_outlier)
+```
+
+
+Here are the cutoffs representing the outliers of our base data:
+
+1. chatter>0.25 (9%)
+2. adult>0.20 (1.5%)
+3. spam>0.01 (0.6%)
+4. no category>0.16 (0.57%)
+
+Then, checked for mutual exclusivity of these rows (taking loss of data into account) and if we remove rows with these features, a loss of 12-13% of the data is incurred, which was deemed a practical trade off for removing a lot of noise from the data, mainly due to these 4 columns
+
+### Why these columns?
+
+1) Chatter and no category tweets will not help with clustering, their correlation with any field is assumed as being a coincidence.
+
+2) Spam and adult are categories not to be desired in clustering.
+
+```{r package_load, include=FALSE}
+library(foreach)
+library(mosaic)
+```
+
+
+```{r Removing rows, include=FALSE}
+df_clean <- df_freq
+df_clean <- df_clean%>%filter(chatter<0.25)%>%filter(adult<0.20)%>%filter(spam<0.01)%>%filter(uncategorized<0.16)
+nrow(df_clean)/nrow(df_freq)
+```
+
+# Customer Segments (Intuition)
+
+# Correlated categories
+
+When looking at the set of categories, we expected some categories to have a strong correlation. Thus, in setting a cutoff, we looked at the number of pairs that made the correlation cutoff.
+
+```{r high_corr, include=FALSE, echo=FALSE}
+high_cor = c()
+cor_df = data.frame(as.table(cor(df)))
+for(i in seq(0.5,0.9,0.05)){
+    
+    high_cor = rbind(high_cor,nrow(cor_df%>%filter(Freq>i)%>%filter(Var1!=Var2)))
+    }
+df_high_cor = data.frame(cbind(seq(0.5,0.9,0.05),high_cor/2))
+colnames(df_high_cor)  <- c("Correlation Cutoff","Pair Counts")
+kable(df_high_cor)
+```
+
+```{r, echo=FALSE}
+kable(cor_df%>%filter(Freq>0.6)%>%filter(Var1!=Var2)%>%arrange(desc(Freq))%>%distinct(Freq, .keep_all=TRUE))
+```
+
+Above are the number of unique pairs of categories that made the cut above a certain correlation value. 11 seems to be a reasonable number to compare. Categories with corr>0.6 can expect to be seen together as the features of the clusters being created.
+
+Therefore, here are the four broad clusters of customers:
+
+## 1) The healthy
+
+**personal_fitness**, **health_nutrition** lead to the highest correlation of 0.8, followed by **health_nutrition** and **outdoors** with a correlation of 0.6. The first category should be populated by people who are health and fit-oriented.
+
+## 2. Gen X
+
+**parenting**, **religion** and **sports_fandom** - all 3 categories have correlation of 0.6 meaning a potential uniform association among all three. We are assuming Gen X to be in this category.
+
+## 3. Social Media People
+
+**Beauty**, **Cooking** and **Fashion** ... all 3 categories are correlated with each other (0.63 - 0.72). While these people might not be focused on a healthy lifestyle in terms of exercise and eating right, they are focused on how they look, social media association fits this mold.
+
+## 4. Gamer
+
+There was one pair (**college_uni** and **online_gaming**) correlation of 0.77, which hits at the young age group around their later teens and early 20s.
+
+
+# Testing
+
+# Clustering using KNN
+
+We perform z-scoring on the dataset and create a grid for number of clusters in KNN to see where the elbow comes in our curve
+
+```{r KNN, include=FALSE}
+sc_mkt = scale(df_clean, center=TRUE, scale=TRUE) # cluster on measurables
+k_grid = seq(2, 20, by=1)
+SSE_grid = foreach(k = k_grid, .combine='c') %do% {
+  cluster_k = kmeans(sc_mkt, k, nstart=50)
+  cluster_k$tot.withinss
+}
+```
+
+```{r plot, echo=FALSE}
+plot(k_grid, SSE_grid, xlab = "K")
+```
+
+Given that there is no clear edge, we set our range of k in [3,6] for clustering based on our intuition and testing. Clustering will help pull individual customers in separate groups based on similarities in tweeting patterns.
+
+```{r KNN_3_6, include=FALSE}
+clust3 = kmeans(sc_mkt, 3, nstart=50)
+clust4 = kmeans(sc_mkt, 4, nstart=50)
+clust5 = kmeans(sc_mkt, 5, nstart=50)
+clust6 = kmeans(sc_mkt, 6, nstart=50)
+```
+
+# Principal Component Analysis
+
+Principal Component Analysis helps understand the composition of each point as an aggregation of the different numbers and types of tweets. I consider only the first two principal components.
+
+```{r PCA2, include=FALSE}
+pc2 = prcomp(df_clean, scale=TRUE, rank=2)
+loadings = pc2$rotation
+scores = pc2$x
+```
+
+## PCA and KNN
+
+Comparing the results of KNN and PCA.
+
+Different plots from KNN:
+
+```{r plotting, echo=FALSE}
+layout(matrix(c(1,1,2,3), 2, 2, byrow = TRUE))
+qplot(scores[,1], scores[,2], color=clust3$cluster, xlab='Component 1', ylab='Component 2', main="3 Clusters")
+qplot(scores[,1], scores[,2], color=clust4$cluster, xlab='Component 1', ylab='Component 2', main="4 Clusters")
+qplot(scores[,1], scores[,2], color=clust5$cluster, xlab='Component 1', ylab='Component 2', main="5 Clusters")
+qplot(scores[,1], scores[,2], color=clust6$cluster, xlab='Component 1', ylab='Component 2', main="6 Clusters")
+```
+
+```{r, PCA, include=FALSE}
+# Question 2: how are the individual PCs loaded on the original variables?
+# The top words associated with each edge of component-1
+o1 = order(loadings[,1], decreasing=TRUE)
+colnames(df_clean)[head(o1,5)]
+colnames(df_clean)[tail(o1,5)]
+# Question 2: how are the individual PCs loaded on the original variables?
+# The top words associated with each edge of component-2
+o2 = order(loadings[,2], decreasing=TRUE)
+colnames(df_clean)[head(o2,5)]
+colnames(df_clean)[tail(o2,5)]
+```
+
+Looking at how PC1 and PC2 are formed in terms of categories:
+
+```{r PCA_Pts, echo=FALSE}
+{plot(loadings, col="lightblue", pch=19, cex=2, xlim = c(-0.3,0.5), ylim = c(-0.45,0.3))
+text(loadings, labels=rownames(loadings), cex=0.4, font=1, pos=1)}
+```
+
+We can see 5 clusters have formed...
+
+```{r k=5, echo=FALSE}
+qplot(scores[,1], scores[,2], color=clust5$cluster, xlab='Component 1', ylab='Component 2', main="5 Clusters")
+```
+
+
+## Cluster Identification
+
+
+Comparing plots for both categories along PC1 and PC2, we can identify the segments
+
+#### 1. The healthy
+
+**personal_fitness**, **health_nutrition**  and **outdoors** appear close by between PC1=[-0.2,-0.1] and PC2=[-0.45,-0.3]
+
+#### 2. Social Media
+
+**Beauty**, **Cooking** and **fashion** ... 3 categories lying between younger ages reflecting categories like **college_uni**, **online_gaming**, **photo_sharing** and health/fit focused **personal_fitness**, **health_nutrition**, **outdoors**.
+
+#### 3. Gamer
+
+The 2 clusters above, **college_uni** and **online_gaming** interact with other categories that gamers are likely to tweet about.
+
+#### 4. Travel
+
+**politics** and **travel** landing close to **news**, allows us to identify this cluster as traveling people who keep up with current events.
+
+#### 5. Gen X
+
+**parenting**, **religion** and **sports_fandom** ... all show up along the right of PC1 after **food**, **school** and **family**. 
+
+
+##Question 3:
+
+```{r, include=FALSE}
+library(arules)
+library(arulesViz)
+library(readr)
+groceries <- read.transactions(file="https://raw.githubusercontent.com/jgscott/ECO395M/master/data/groceries.txt",sep = ',',format="basket",rm.duplicates=TRUE)
+summary(groceries)
+```
+```{r}
+itemFrequencyPlot(groceries, topN=25, type='absolute')
+```
+
+
+
+## Shown from the plot, the frequency of occurence for items like whole milk, vegetables, rolls, soda, yogurt have frequency of occurences more than 1000, and thus, will most likely play an important role in the rule mapping.
+
+
+```{r, include=FALSE}
+grocrules <- apriori(groceries, 
+                      parameter=list(support=.001, confidence=0.90, maxlen=40))
+inspect(grocrules)
+```
+
+## This finds all association rule mappings(129) that have a support of 0.001 and confidence of 0.90 (at the minimum). 0.1% is considered a good number as the overall dataset size is high (about 10000). We take a higher confidence as it indicates 90% probablity that these mappings occur in the basket. We want to consider all possible items in the basket.
+
+
+```{r}
+plot(grocrules)
+```
+
+
+## Here, the lift value keeps decreasing as we increase the support and confidence. Thus, taking the right mix of the confidence, support and lift to identify the best rule mappings is crucial.
+
+
+```{r, include=FALSE}
+inspect(subset(grocrules,subset=lift>5))
+```
+
+
+## The lift value is > 5, which means there is 5 times greater chance of RHS outcome occuring if LHS occurs, which causes a high lift value. There are higher chances of other vegetables occuring in combination with tropical fruit, citrus fruit, sour cream and similarly root vegetables, yogurt occurs with higher chances if butter, sliced cheese, cream cheese occur.
+
+
+
+```{r}
+plot(head(sort(grocrules, by="support"), 20),
+  method="graph", control=list(cex=.9))
+```
+
+
+## The mapping from 20 different rules picked up from grocrules. Whole milk, yogurt, vegetables are at the center of the plot showing that they have a major role ot play in the rule mappings. Therefore, these prodcuts are picked up in combination with other products at a higher probability.
+
+
+#### The plot shows a similar output when plotted by confidence or lift as parameter...shown below. 
+
+
+```{r}
+plot(head(sort(grocrules, by="lift"), 20),
+  method="graph", control=list(cex=.9))
+```
