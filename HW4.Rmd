@@ -2,7 +2,7 @@
 title: "Homework 4"
 author: "Cameron Wheatley, Joseph Monahan, Saager buch"
 date: "4/16/2023"
-output: html_document
+output: md_document
 ---
 
 ##Question 1:
